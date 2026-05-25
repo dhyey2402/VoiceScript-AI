@@ -1,196 +1,181 @@
-"use client" 
-import { useState, useEffect  } from "react"
+"use client";
+import { useState, useEffect, useRef } from "react";
+
+const BARS = 13;
 
 function RecorderPanel({ setTranscript }) {
-    const [isRecording, setIsRecording] = useState(false)
+  const [isRecording, setIsRecording] = useState(false);
+  const [seconds, setSeconds]         = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [audioURL, setAudioURL]       = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [showSaved, setShowSaved]     = useState(false);
+  const [bars, setBars]               = useState(Array(BARS).fill(4));
+  const waveRef = useRef(null);
 
-    const [seconds, setSeconds] = useState(0)
+  /* wave animation */
+  useEffect(() => {
+    if (isRecording) {
+      waveRef.current = setInterval(() => {
+        setBars(Array.from({ length: BARS }, () => Math.random() * 32 + 4));
+      }, 120);
+    } else {
+      clearInterval(waveRef.current);
+      setBars(Array(BARS).fill(4));
+    }
+    return () => clearInterval(waveRef.current);
+  }, [isRecording]);
 
-    const [showStartedText, setShowStartedText] = useState(false)
+  /* timer */
+  useEffect(() => {
+    let t;
+    if (isRecording) t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [isRecording]);
 
-    const [mediaRecorder, setMediaRecorder] = useState(null)
+  const fmt = (s) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-    const [audioURL, setAudioURL] = useState("")
-
-    const [showSavedMessage, setShowSavedMessage] = useState(false)
-
-    const [loading, setLoading] = useState(false)
-
-    async function handleStart() {
-
+  async function start() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks = [];
+      rec.ondataavailable = (e) => chunks.push(e.data);
+      rec.onstop = async () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        setAudioURL(URL.createObjectURL(blob));
+        const fd = new FormData();
+        fd.append("file", blob, "rec.webm");
         try {
-
-            const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true
-            })
-
-            const recorder = new MediaRecorder(stream)
-
-            const chunks = []
-
-            recorder.ondataavailable = (event) => {
-            chunks.push(event.data)
-            }
-
-            recorder.onstop = async () => {
-
-                const blob = new Blob(chunks, {
-                    type: "audio/webm"
-                })
-
-                const url = URL.createObjectURL(blob)
-
-                setAudioURL(url)
-
-                const formData = new FormData()
-
-                formData.append("file", blob, "recording.webm")
-
-                try {
-
-                    setLoading(true)
-
-                    const response = await fetch(
-                    "http://127.0.0.1:5000/transcribe",
-                    {
-                        method: "POST",
-                        body: formData
-                    }
-                    )
-
-                    const data = await response.json()
-                    setTranscript(data.transcript)
-
-                    console.log(data)
-
-                } catch (error) {
-
-                    console.log(error)
-
-                } finally {
-
-                    setLoading(false)
-
-                }
-
-            }
-
-            recorder.start()
-
-            setMediaRecorder(recorder)
-
-            setIsRecording(true)
-
-            setShowStartedText(true)
-
-            setTimeout(() => {
-            setShowStartedText(false)
-            }, 2000)
-
-        } catch (error) {
-
-            console.log(error)
-
-            alert("Microphone access denied")
-
-        } 
+          setLoading(true);
+          const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+          const res = await fetch("http://127.0.0.1:5000/transcribe", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            body: fd,
+          });
+          const data = await res.json();
+          setTranscript(data.transcript);
+        } catch (e) { console.error(e); }
+        finally { setLoading(false); }
+      };
+      rec.start();
+      setMediaRecorder(rec);
+      setIsRecording(true);
+      setSeconds(0);
+      setAudioURL("");
+      setShowSaved(false);
+    } catch {
+      alert("Microphone access denied.");
     }
-    function handleStop() {
-        mediaRecorder.stop()
-        setIsRecording(false)
-        setSeconds(0) 
-        setShowSavedMessage(true)
-    }
+  }
 
-    useEffect(() => {
-
-        let interval
-
-        if (isRecording) {
-
-            interval = setInterval(() => {
-
-            setSeconds(prev => prev + 1)
-
-            }, 1000)
-
-        }
-
-        return () => clearInterval(interval)
-
-    }, [isRecording])
+  function stop() {
+    mediaRecorder.stop();
+    setIsRecording(false);
+    setSeconds(0);
+    setShowSaved(true);
+    setTimeout(() => setShowSaved(false), 3000);
+  }
 
   return (
-    <div className="bg-white shadow-md rounded-xl p-6 mt-6">
-      <h2 className="text-xl font-semibold mb-4 text-black">
-        Recorder
-      </h2>
+    <div className="card fade-up-2" style={{ padding: "36px 32px" }}>
 
-      <div className="flex items-center gap-4 flex-wrap">
-        {!isRecording && (<button onClick={handleStart} className="bg-green-500 hover:bg-green-600 transition text-white px-4 py-2 rounded-lg">
-          Start Recording
-        </button> )}
-
-        {isRecording && (<button onClick={handleStop} className="bg-red-500 hover:bg-red-600 transition text-white px-4 py-2 rounded-lg">
-          Stop Recording
-        </button> )}
-
-        {isRecording && (
-        <div className="flex items-center gap-2 mt-4">
-            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-
-            <span className="text-red-500 font-medium">
-            Recording Live
-            </span>
-        </div>
+      {/* Top row: label + status */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
+        <span className="label">Recorder</span>
+        {loading ? (
+          <span className="chip chip-processing"><div className="spinner" style={{ width:10, height:10, borderWidth:1.5 }} />Processing</span>
+        ) : isRecording ? (
+          <span className="chip chip-recording"><div className="dot dot-red" />Recording</span>
+        ) : (
+          <span className="chip chip-idle"><div className="dot dot-gray" />Idle</span>
         )}
-
-        {showStartedText && (
-            <span className="text-green-600 font-medium self-center animate-pulse">
-                Recording Started
-            </span>
-        )}
-
       </div>
-       <p className={`mt-4 text-lg ${isRecording ? "text-red-500" : "text-green-500"}`}>
-        {isRecording ? "Recording..." : "Not Recording"}
-       </p>
-       {isRecording && (<p className={`text-2xl font-bold mt-2 ${isRecording ? "text-red-500" : "text-green-500"}`} >
-          00:{seconds < 10 ? `0${seconds}` : seconds}
-       </p> )}
 
-       {loading && (
-            <p className="text-blue-500 mt-4">
-                Uploading audio...
-            </p>
-    )}
+      {/* Main control row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
 
-       {audioURL && (
-        <audio
-            controls
-            src={audioURL}
-            className="mt-4 w-full"
-        />
-        )}
+        {/* Button */}
+        <button
+          onClick={isRecording ? stop : start}
+          className={`btn-record ${isRecording ? "btn-record-active" : "btn-record-idle"}`}
+          aria-label={isRecording ? "Stop" : "Record"}
+        >
+          {isRecording ? (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
+              <rect x="6" y="6" width="12" height="12" rx="2.5" />
+            </svg>
+          ) : (
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="2" width="6" height="11" rx="3" fill="white" />
+              <path d="M5 11a7 7 0 0 0 14 0" stroke="white" strokeWidth="2" strokeLinecap="round" />
+              <line x1="12" y1="18" x2="12" y2="22" stroke="white" strokeWidth="2" strokeLinecap="round" />
+              <line x1="8" y1="22" x2="16" y2="22" stroke="white" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          )}
+        </button>
 
-        {audioURL && (
-            <button
-                onClick={() => setAudioURL("")}
-                className="bg-gray-700 text-white px-4 py-2 rounded-lg mt-4"
-            >
-                Delete Recording
-            </button>
-        )}
+        {/* Right side content */}
+        <div style={{ flex: 1 }}>
+          {isRecording ? (
+            <>
+              <div className="wave" style={{ marginBottom: 10 }}>
+                {bars.map((h, i) => (
+                  <div key={i} className="wave-bar on" style={{ height: h }} />
+                ))}
+              </div>
+              <div className="timer">{fmt(seconds)}</div>
+            </>
+          ) : loading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div className="spinner" />
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 14, color: "var(--text-1)" }}>Transcribing…</p>
+                <p style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>Deepgram AI is at work</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <p style={{ fontWeight: 600, fontSize: 15, color: "var(--text-1)", marginBottom: 4 }}>
+                {audioURL ? "Ready to play back" : "Ready to record"}
+              </p>
+              <p style={{ fontSize: 13, color: "var(--text-3)" }}>
+                {audioURL ? "Review your audio below" : "Tap the mic to start"}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
 
-        {showSavedMessage && (
-            <p className="text-green-600 font-medium mt-4">
-                Recording saved successfully
-            </p>
-        )}
+      {/* Audio playback */}
+      {audioURL && !isRecording && (
+        <>
+          <div className="hr" />
+          <audio controls src={audioURL} style={{ marginBottom: 14 }} />
+          <button
+            className="btn-action btn-action-delete"
+            onClick={() => { setAudioURL(""); setTranscript(""); }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
+            </svg>
+            Delete
+          </button>
+        </>
+      )}
 
+      {showSaved && (
+        <div className="toast toast-green">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+          Saved · transcribing now…
+        </div>
+      )}
     </div>
-    
-  )
+  );
 }
 
-export default RecorderPanel
+export default RecorderPanel;
