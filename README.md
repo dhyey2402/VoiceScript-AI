@@ -244,12 +244,6 @@ Protected API Access
 
 ---
 
-# 📸 Screenshots
-
-(Add screenshots here later)
-
----
-
 # 👨‍💻 Developer
 
 Developed by Dhyey Patel
