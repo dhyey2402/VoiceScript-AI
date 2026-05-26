@@ -29,7 +29,13 @@ function Header() {
         },
       })
         .then((res) => {
-          if (!res.ok) throw new Error("Unauthorized");
+          if (res.status === 401) {
+            localStorage.removeItem("token");
+            sessionStorage.removeItem("token");
+            router.push("/login");
+            throw new Error("Unauthorized");
+          }
+          if (!res.ok) throw new Error("Failed to fetch profile");
           return res.json();
         })
         .then((data) => {

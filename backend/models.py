@@ -40,7 +40,7 @@ class Transcript(db.Model):
 
     created_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(IST)
+        default=lambda: datetime.now(IST).replace(tzinfo=None)
     )
 
     duration_seconds = db.Column(db.Integer)

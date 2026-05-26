@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from models import db, Transcript, User
 from flask_jwt_extended import JWTManager
+from pydub import AudioSegment
 from flask_jwt_extended import create_access_token
 from werkzeug.security import (
     generate_password_hash,
@@ -25,6 +26,7 @@ CORS(app)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = False
 
 db.init_app(app)
 jwt = JWTManager(app)
@@ -68,56 +70,115 @@ def transcribe():
 
     current_user_id = int(get_jwt_identity())
 
-    file = request.files.get("file")
+    audio_file = request.files.get("audio") or request.files.get("file")
 
-    if not file:
+    if not audio_file:
         return jsonify({
             "error": "No file uploaded"
         }), 400
 
-    audio_data = file.read()
+    filename = audio_file.filename
+    if not filename:
+        return jsonify({
+            "error": "No file uploaded"
+        }), 400
 
-    response = requests.post(
+    # Validate file extension before writing to disk
+    extension = filename.split(".")[-1].lower()
+    allowed_extensions = ["webm", "wav", "mp3", "m4a", "ogg"]
+    if extension not in allowed_extensions:
+        return jsonify({
+            "error": f"Unsupported file type. Supported formats: {', '.join(allowed_extensions)}"
+        }), 400
 
-        "https://api.deepgram.com/v1/listen?punctuate=true&smart_format=true",
+    # Validate file size (max 10MB) before loading into memory
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+    audio_file.seek(0, 2)
+    file_size = audio_file.tell()
+    audio_file.seek(0)
 
-        headers={
-            "Authorization": f"Token {DEEPGRAM_API_KEY}",
-            "Content-Type": "audio/webm"
-        },
+    if file_size > MAX_FILE_SIZE:
+        return jsonify({
+            "error": "File too large. Maximum size is 10MB."
+        }), 400
 
-        data=audio_data
-    )
-
-    result = response.json()
-
-    transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
+    # Save to a temporary file using the original extension so pydub can decode it correctly
+    temp_input = f"temp_input.{extension}"
+    converted_path = "converted_audio.wav"
 
     try:
-        new_transcript = Transcript(
+        audio_file.save(temp_input)
 
-            text=transcript,
+        # Decode using pydub just to get metadata duration
+        audio = AudioSegment.from_file(temp_input)
+        duration_seconds = int(len(audio) / 1000)
 
-            user_id=current_user_id,
+        # Map file extension to exact Deepgram Content-Type to avoid processing distortion
+        content_type_map = {
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "webm": "audio/webm",
+            "m4a": "audio/m4a",
+            "ogg": "audio/ogg"
+        }
+        content_type = content_type_map.get(extension, "audio/wav")
 
-            duration_seconds=10,
+        # Send the ORIGINAL high-fidelity audio file directly to Deepgram
+        with open(temp_input, "rb") as audio_data:
+            response = requests.post(
+                "https://api.deepgram.com/v1/listen?punctuate=true&smart_format=true",
+                headers={
+                    "Authorization": f"Token {DEEPGRAM_API_KEY}",
+                    "Content-Type": content_type
+                },
+                data=audio_data   
+            )
 
-            filename=file.filename,
+        if response.status_code != 200:
+            return jsonify({
+                "error": f"Deepgram API error: {response.text}"
+            }), response.status_code
 
-            language="en"
-        )
+        result = response.json()
+        transcript = result.get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])[0].get("transcript", "")
 
-        db.session.add(new_transcript)
+        # Save to database
+        try:
+            new_transcript = Transcript(
+                text=transcript,
+                user_id=current_user_id,
+                duration_seconds=duration_seconds,
+                filename=filename,
+                language="en"
+            )
+            db.session.add(new_transcript)
+            db.session.commit()
+        except Exception as db_err:
+            print("Database error:", db_err)
+            db.session.rollback()
 
-        db.session.commit()
+        return jsonify({
+            "transcript": transcript
+        })
 
     except Exception as e:
-        print("Database error:", e)
-        db.session.rollback()
+        print("Transcription error:", e)
+        return jsonify({
+            "error": f"Failed to process audio: {str(e)}"
+        }), 500
 
-    return jsonify({
-        "transcript": transcript
-    })
+    finally:
+        # Clean up temporary files safely
+        if os.path.exists(temp_input):
+            try:
+                os.remove(temp_input)
+            except Exception:
+                pass
+        if os.path.exists(converted_path):
+            try:
+                os.remove(converted_path)
+            except Exception:
+                pass
 
 
 @app.route("/transcripts", methods=["GET"])
@@ -126,7 +187,9 @@ def get_transcripts():
 
     current_user_id = int(get_jwt_identity())
 
-    transcripts = Transcript.query.order_by(
+    transcripts = Transcript.query.filter_by(
+        user_id=current_user_id
+    ).order_by(
         Transcript.created_at.desc()
     ).all()
 
