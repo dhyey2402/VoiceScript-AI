@@ -48,3 +48,5 @@ class Transcript(db.Model):
     filename = db.Column(db.String(255))
 
     language = db.Column(db.String(50))
+
+    name = db.Column(db.String(200), nullable=True)

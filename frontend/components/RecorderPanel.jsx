@@ -1,108 +1,144 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 
-const BARS = 13;
+const NUM_BARS = 60;
 
-function RecorderPanel({ setTranscript }) {
-  const [activeTab, setActiveTab] = useState("record"); // "record" or "upload"
-  
+function fmt(s) {
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function RecorderPanel({ setTranscript, mode }) {
   // Recording states
   const [isRecording, setIsRecording] = useState(false);
   const [seconds, setSeconds]         = useState(0);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [audioURL, setAudioURL]       = useState("");
-  
+
   // Upload states
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadAudioURL, setUploadAudioURL] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Common states
-  const [loading, setLoading]         = useState(false);
-  const [showSaved, setShowSaved]     = useState(false);
-  const [bars, setBars]               = useState(Array(BARS).fill(4));
+  // Common
+  const [loading, setLoading]   = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
+  const [bars, setBars]         = useState(Array(NUM_BARS).fill(8));
+  const [volume, setVolume]     = useState(80);
   const waveRef = useRef(null);
 
-  /* wave animation */
+  /* Waveform animation */
   useEffect(() => {
     if (isRecording) {
       waveRef.current = setInterval(() => {
-        setBars(Array.from({ length: BARS }, () => Math.random() * 32 + 4));
-      }, 120);
+        setBars(
+          Array.from({ length: NUM_BARS }, (_, i) => {
+            const center = NUM_BARS / 2;
+            const dist = Math.abs(i - center) / center;
+            const base = (1 - dist * 0.6) * 40;
+            return Math.random() * base + 4;
+          })
+        );
+      }, 80);
     } else {
       clearInterval(waveRef.current);
-      setBars(Array(BARS).fill(4));
+      setBars(Array(NUM_BARS).fill(8));
     }
     return () => clearInterval(waveRef.current);
   }, [isRecording]);
 
-  /* timer */
+  /* Timer */
   useEffect(() => {
     let t;
     if (isRecording) t = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [isRecording]);
 
-  const fmt = (s) =>
-    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  // Refs for streaming
+  const chunksRef = useRef([]);
+  const isProcessingRef = useRef(false);
 
-  // Reset states when switching tabs
-  const handleTabChange = (tab) => {
-    if (isRecording) return;
-    setActiveTab(tab);
-    setTranscript("");
-    if (tab === "record") {
-      setSelectedFile(null);
-      setUploadAudioURL("");
-    } else {
-      setAudioURL("");
-    }
-  };
-
+  /* Start recording */
   async function start() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      const chunks = [];
-      rec.ondataavailable = (e) => chunks.push(e.data);
+      const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      chunksRef.current = [];
+      
+      rec.ondataavailable = async (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+          
+          // Pseudo-streaming: send accumulated audio to API
+          if (!isProcessingRef.current && isRecording) {
+            isProcessingRef.current = true;
+            try {
+              const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+              const fd = new FormData();
+              fd.append("audio", blob, "rec.webm");
+              
+              const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+              const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe?save=false`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+                body: fd,
+              });
+              
+              if (res.ok) {
+                const data = await res.json();
+                if (data.transcript) {
+                  setTranscript(data.transcript);
+                }
+              }
+            } catch (err) {
+              console.error("Streaming transcription error:", err);
+            } finally {
+              isProcessingRef.current = false;
+            }
+          }
+        }
+      };
+
       rec.onstop = async () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setAudioURL(URL.createObjectURL(blob));
         const fd = new FormData();
-        fd.append("audio", blob, "rec.webm"); // Use 'audio' matching the backend API
+        fd.append("audio", blob, "rec.webm");
         try {
           setLoading(true);
           const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-          const res = await fetch("http://127.0.0.1:5000/transcribe", {
+          // Final transcription with save=true (default)
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe`, {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${token}` },
             body: fd,
           });
           const data = await res.json();
           if (res.ok) {
-            setTranscript(data.transcript);
-            if (!data.transcript || data.transcript.trim() === "") {
-              alert("Transcription was successful, but no clear speech could be recognized in the audio file.");
+            setTranscript(data.transcript || "");
+            if (!data.transcript?.trim()) {
+              alert("No clear speech detected in the recording.");
             }
           } else {
             alert(data.error || "Failed to transcribe audio.");
           }
-        } catch (e) { 
-          console.error(e); 
+        } catch (e) {
+          console.error(e);
           alert("An error occurred during transcription.");
-        } finally { 
-          setLoading(false); 
+        } finally {
+          setLoading(false);
+          chunksRef.current = [];
         }
       };
-      rec.start();
+
+      // Start with timeslice to fire ondataavailable periodically
+      rec.start(3000); 
       setMediaRecorder(rec);
       setIsRecording(true);
       setSeconds(0);
       setAudioURL("");
       setShowSaved(false);
+      setTranscript("");
     } catch {
       alert("Microphone access denied.");
     }
@@ -111,6 +147,7 @@ function RecorderPanel({ setTranscript }) {
   function stop() {
     if (mediaRecorder && isRecording) {
       mediaRecorder.stop();
+      mediaRecorder.stream?.getTracks().forEach((t) => t.stop());
       setIsRecording(false);
       setSeconds(0);
       setShowSaved(true);
@@ -118,82 +155,50 @@ function RecorderPanel({ setTranscript }) {
     }
   }
 
-  // Upload Actions
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      selectFile(file);
-    }
-  };
-
+  /* Upload handlers */
   const selectFile = (file) => {
-    const extension = file.name.split(".").pop().toLowerCase();
+    const ext = file.name.split(".").pop().toLowerCase();
     const allowed = ["webm", "wav", "mp3", "m4a", "ogg"];
-    if (!allowed.includes(extension)) {
-      alert(`Unsupported file format. Supported formats: ${allowed.join(", ")}`);
+    if (!allowed.includes(ext)) {
+      alert(`Unsupported format. Allowed: ${allowed.join(", ")}`);
       return;
     }
-
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      alert("File is too large. Maximum size is 10MB.");
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File too large. Max 10 MB.");
       return;
     }
-
     setSelectedFile(file);
     setUploadAudioURL(URL.createObjectURL(file));
     setTranscript("");
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = () => {
-    setDragOver(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      selectFile(file);
-    }
-  };
-
   const handleUploadSubmit = async () => {
     if (!selectedFile) return;
-
     const fd = new FormData();
     fd.append("audio", selectedFile, selectedFile.name);
-
     try {
       setLoading(true);
       const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:5000/transcribe", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         body: fd,
       });
       const data = await res.json();
       if (res.ok) {
-        setTranscript(data.transcript);
-        if (!data.transcript || data.transcript.trim() === "") {
-          alert("Transcription was successful, but no clear speech could be recognized in the audio file. Make sure your file contains distinct, spoken words.");
-        } else {
+        setTranscript(data.transcript || "");
+        if (data.transcript?.trim()) {
           setShowSaved(true);
           setTimeout(() => setShowSaved(false), 3000);
+        } else {
+          alert("No clear speech detected.");
         }
       } else {
-        alert(data.error || "Failed to transcribe audio.");
+        alert(data.error || "Failed to transcribe.");
       }
     } catch (e) {
       console.error(e);
-      alert("An error occurred during transcription.");
+      alert("An error occurred.");
     } finally {
       setLoading(false);
     }
@@ -203,338 +208,219 @@ function RecorderPanel({ setTranscript }) {
     setSelectedFile(null);
     setUploadAudioURL("");
     setTranscript("");
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  return (
-    <div className="card fade-up-2" style={{ padding: "36px 32px" }}>
-
-      {/* Top row: label + status */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-        <span className="label">Transcription Center</span>
-        {loading ? (
-          <span className="chip chip-processing"><div className="spinner" style={{ width:10, height:10, borderWidth:1.5 }} />Processing</span>
-        ) : isRecording ? (
-          <span className="chip chip-recording"><div className="dot dot-red" />Recording</span>
-        ) : (
-          <span className="chip chip-idle"><div className="dot dot-gray" />Idle</span>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <div style={{
-        display: "flex",
-        background: "rgba(255, 255, 255, 0.02)",
-        border: "1px solid rgba(255, 255, 255, 0.06)",
-        borderRadius: "14px",
-        padding: "4px",
-        marginBottom: "28px"
-      }}>
-        <button
-          onClick={() => handleTabChange("record")}
-          disabled={isRecording || loading}
-          style={{
-            flex: 1,
-            padding: "10px 16px",
-            borderRadius: "10px",
-            border: "none",
-            background: activeTab === "record" ? "rgba(255, 255, 255, 0.06)" : "transparent",
-            color: activeTab === "record" ? "var(--text-1)" : "var(--text-2)",
-            fontWeight: 600,
-            fontSize: "13px",
-            cursor: (isRecording || loading) ? "not-allowed" : "pointer",
-            transition: "all 0.2s var(--ease)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px"
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <rect x="9" y="2" width="6" height="11" rx="3" />
-            <path d="M5 11a7 7 0 0 0 14 0" />
-            <line x1="12" y1="18" x2="12" y2="22" />
-          </svg>
-          Voice Recorder
-        </button>
-        <button
-          onClick={() => handleTabChange("upload")}
-          disabled={isRecording || loading}
-          style={{
-            flex: 1,
-            padding: "10px 16px",
-            borderRadius: "10px",
-            border: "none",
-            background: activeTab === "upload" ? "rgba(255, 255, 255, 0.06)" : "transparent",
-            color: activeTab === "upload" ? "var(--text-1)" : "var(--text-2)",
-            fontWeight: 600,
-            fontSize: "13px",
-            cursor: (isRecording || loading) ? "not-allowed" : "pointer",
-            transition: "all 0.2s var(--ease)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px"
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          Audio Upload
-        </button>
-      </div>
-
-      {/* Voice Recorder View */}
-      {activeTab === "record" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
-          {/* Record Button */}
-          <button
-            onClick={isRecording ? stop : start}
-            className={`btn-record ${isRecording ? "btn-record-active" : "btn-record-idle"}`}
-            aria-label={isRecording ? "Stop" : "Record"}
-            disabled={loading}
-          >
-            {isRecording ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-                <rect x="6" y="6" width="12" height="12" rx="2.5" />
-              </svg>
-            ) : (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <rect x="9" y="2" width="6" height="11" rx="3" fill="white" />
-                <path d="M5 11a7 7 0 0 0 14 0" stroke="white" strokeWidth="2" strokeLinecap="round" />
-                <line x1="12" y1="18" x2="12" y2="22" stroke="white" strokeWidth="2" strokeLinecap="round" />
-                <line x1="8" y1="22" x2="16" y2="22" stroke="white" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            )}
-          </button>
-
-          {/* Right side content */}
-          <div style={{ flex: 1 }}>
-            {isRecording ? (
-              <>
-                <div className="wave" style={{ marginBottom: 10 }}>
-                  {bars.map((h, i) => (
-                    <div key={i} className="wave-bar on" style={{ height: h }} />
-                  ))}
-                </div>
-                <div className="timer">{fmt(seconds)}</div>
-              </>
-            ) : loading ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div className="spinner" />
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: 14, color: "var(--text-1)" }}>Transcribing…</p>
-                  <p style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>Deepgram AI is at work</p>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <p style={{ fontWeight: 600, fontSize: 15, color: "var(--text-1)", marginBottom: 4 }}>
-                  {audioURL ? "Ready to play back" : "Ready to record"}
-                </p>
-                <p style={{ fontSize: 13, color: "var(--text-3)" }}>
-                  {audioURL ? "Review your audio below" : "Tap the mic to start"}
-                </p>
-              </div>
-            )}
+  /* ── Render: Upload mode ── */
+  if (mode === "upload") {
+    return (
+      <div className="recording-panel" style={{ flex: "none", minHeight: 220 }}>
+        <div className="recording-panel-toprow" style={{ marginBottom: 14 }}>
+          <span className="recording-title">Audio Upload</span>
+          <div className="badge-row">
+            {loading
+              ? <span className="badge badge-processing"><div className="spinner" style={{ width: 8, height: 8, borderWidth: 1.5 }} />Processing</span>
+              : <span className="badge badge-idle">Upload Mode</span>
+            }
           </div>
         </div>
-      )}
 
-      {/* Voice Playback */}
-      {activeTab === "record" && audioURL && !isRecording && (
-        <>
+        {!selectedFile ? (
+          <div
+            className={`upload-zone${dragOver ? " dragover" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) selectFile(f); }}
+            onClick={() => !loading && fileInputRef.current?.click()}
+            style={{ cursor: loading ? "not-allowed" : "pointer" }}
+          >
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) selectFile(f); }}
+              accept="audio/webm,audio/wav,audio/mpeg,audio/mp3,audio/m4a,audio/ogg"
+              style={{ display: "none" }}
+              disabled={loading}
+            />
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth="1.8">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>Drop your audio file here</p>
+            <p style={{ fontSize: 11, color: "var(--text-3)" }}>or click to browse · MP3, WAV, WEBM, M4A, OGG · max 10 MB</p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.03)", borderRadius: 10, padding: "10px 14px", border: "1px solid var(--border)" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth="2">
+                <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
+              </svg>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedFile.name}</p>
+                <p style={{ fontSize: 10.5, color: "var(--text-3)" }}>{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+              </div>
+            </div>
+            {uploadAudioURL && <audio controls src={uploadAudioURL} />}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={handleUploadSubmit}
+                disabled={loading}
+                style={{
+                  flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  padding: "9px 16px", borderRadius: 9, border: "none",
+                  background: "linear-gradient(135deg, #d97706, #f59e0b)",
+                  color: "rgba(0,0,0,0.85)", fontWeight: 700, fontSize: 12.5,
+                  cursor: loading ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 16px rgba(245,158,11,0.3)", fontFamily: "inherit",
+                }}
+              >
+                {loading ? <><div className="spinner" style={{ width: 13, height: 13 }} />Transcribing…</> : "Transcribe File"}
+              </button>
+              <button className="btn-action btn-action-delete" onClick={clearFile} disabled={loading}>Clear</button>
+            </div>
+          </div>
+        )}
+
+        {showSaved && (
+          <div className="toast toast-green">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+            Transcription complete!
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Render: Record mode (main view) ── */
+  const maxSeconds  = 300; // 5 min demo max
+
+  return (
+    <div className="recording-panel">
+      {/* Top row */}
+      <div className="recording-panel-toprow">
+        <span className="recording-title">
+          Audio Recorder
+        </span>
+        <div className="badge-row">
+          {isRecording ? (
+            <>
+              <span className="badge badge-active"><span className="dot dot-green" />Active</span>
+              <span className="badge badge-amber"><span className="dot dot-amber" />Amber</span>
+            </>
+          ) : loading ? (
+            <span className="badge badge-processing"><div className="spinner" style={{ width: 8, height: 8, borderWidth: 1.5 }} />Processing</span>
+          ) : (
+            <span className="badge badge-idle">Idle</span>
+          )}
+        </div>
+      </div>
+
+      {/* Timestamp */}
+      <div className="recording-timestamp">
+        {fmt(seconds)} / {fmt(maxSeconds)}
+      </div>
+
+      {/* Waveform */}
+      <div className="waveform-container">
+        {bars.map((h, i) => {
+          const center = NUM_BARS / 2;
+          const dist = Math.abs(i - center) / center;
+          const isPeak = isRecording && h > 30 && dist < 0.35;
+          return (
+            <div
+              key={i}
+              className={`waveform-bar${isRecording ? " active" : ""}${isPeak ? " peak" : ""}`}
+              style={{ height: `${h}px` }}
+            />
+          );
+        })}
+      </div>
+
+      {/* Record button row */}
+      <div className="record-center-row">
+        <button
+          id="record-btn"
+          onClick={isRecording ? stop : start}
+          disabled={loading}
+          className={`btn-record-main${isRecording ? " recording" : ""}`}
+          aria-label={isRecording ? "Stop recording" : "Start recording"}
+        >
+          {isRecording ? (
+            <>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(0,0,0,0.8)">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+              <span className="btn-record-time">{fmt(seconds)}</span>
+            </>
+          ) : loading ? (
+            <div className="spinner" style={{ width: 20, height: 20, borderColor: "rgba(0,0,0,0.2)", borderTopColor: "rgba(0,0,0,0.8)" }} />
+          ) : (
+            <>
+              <span className="btn-record-label">RECORD</span>
+              <span className="btn-record-time">{fmt(seconds)} / {fmt(maxSeconds)}</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Controls row */}
+      <div className="controls-row">
+        {/* Volume */}
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+        </svg>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={volume}
+          onChange={(e) => setVolume(Number(e.target.value))}
+          className="vol-slider"
+          style={{
+            background: `linear-gradient(to right, var(--amber) ${volume}%, rgba(255,255,255,0.1) ${volume}%)`,
+          }}
+          aria-label="Volume"
+        />
+        <span className="ctrl-text">{volume}%</span>
+
+        <div className="ctrl-sep" />
+
+        {/* Playback speed */}
+        <span className="ctrl-text">1×</span>
+
+        <div className="ctrl-sep" />
+
+        {/* Duration */}
+        <span className="ctrl-text" style={{ marginLeft: "auto" }}>
+          {fmt(seconds)} / {fmt(maxSeconds)}
+        </span>
+      </div>
+
+      {/* Playback after recording */}
+      {audioURL && !isRecording && (
+        <div style={{ marginTop: 14 }}>
           <div className="hr" />
-          <audio controls src={audioURL} style={{ marginBottom: 14 }} />
+          <audio controls src={audioURL} />
           <button
             className="btn-action btn-action-delete"
+            style={{ marginTop: 10, fontSize: 11 }}
             onClick={() => { setAudioURL(""); setTranscript(""); }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M9 6V4h6v2" />
             </svg>
-            Delete
+            Delete Recording
           </button>
-        </>
-      )}
-
-      {/* Audio Upload View */}
-      {activeTab === "upload" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-          {!selectedFile ? (
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => !loading && fileInputRef.current?.click()}
-              style={{
-                border: dragOver ? "2px dashed var(--purple)" : "2px dashed rgba(255, 255, 255, 0.12)",
-                borderRadius: "16px",
-                padding: "36px 24px",
-                textAlign: "center",
-                cursor: loading ? "not-allowed" : "pointer",
-                background: dragOver ? "rgba(139, 92, 246, 0.04)" : "rgba(255, 255, 255, 0.01)",
-                transition: "all 0.2s var(--ease)",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "12px",
-                position: "relative"
-              }}
-            >
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="audio/webm,audio/wav,audio/mpeg,audio/mp3,audio/m4a,audio/ogg"
-                style={{ display: "none" }}
-                disabled={loading}
-              />
-              <div style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "50%",
-                background: "rgba(139, 92, 246, 0.1)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--purple)",
-                marginBottom: "4px"
-              }}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-              </div>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: "15px", color: "var(--text-1)", marginBottom: "4px" }}>
-                  Drag & drop your audio file here
-                </p>
-                <p style={{ fontSize: "13px", color: "var(--text-3)" }}>
-                  or click to browse from device
-                </p>
-              </div>
-              <p style={{ fontSize: "11px", color: "var(--text-3)", marginTop: "4px", letterSpacing: "0.02em" }}>
-                Supports MP3, WAV, WEBM, M4A, OGG up to 10MB
-              </p>
-            </div>
-          ) : (
-            <div style={{
-              background: "rgba(255, 255, 255, 0.02)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              borderRadius: "16px",
-              padding: "20px 24px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "16px"
-            }}>
-              {/* File Info */}
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <div style={{
-                  width: "40px",
-                  height: "40px",
-                  borderRadius: "10px",
-                  background: "rgba(99, 102, 241, 0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--indigo)"
-                }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 18V5l12-2v13" />
-                    <circle cx="6" cy="18" r="3" />
-                    <circle cx="18" cy="16" r="3" />
-                  </svg>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{
-                    fontWeight: 600,
-                    fontSize: "14px",
-                    color: "var(--text-1)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    marginBottom: "2px"
-                  }}>
-                    {selectedFile.name}
-                  </p>
-                  <p style={{ fontSize: "12px", color: "var(--text-3)" }}>
-                    {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB · {selectedFile.type || "Audio file"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Audio Playback Preview */}
-              {uploadAudioURL && (
-                <div style={{ marginTop: "4px" }}>
-                  <audio controls src={uploadAudioURL} style={{ width: "100%" }} />
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
-                <button
-                  onClick={handleUploadSubmit}
-                  disabled={loading}
-                  style={{
-                    flex: 1,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                    padding: "10px 20px",
-                    borderRadius: "10px",
-                    border: "none",
-                    background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)",
-                    color: "white",
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    cursor: loading ? "not-allowed" : "pointer",
-                    boxShadow: "0 4px 16px rgba(139, 92, 246, 0.25)",
-                    transition: "all 0.2s var(--ease)"
-                  }}
-                >
-                  {loading ? (
-                    <>
-                      <div className="spinner" style={{ width: 14, height: 14, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.2)", borderTopColor: "#fff" }} />
-                      Transcribing...
-                    </>
-                  ) : (
-                    <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <polygon points="12 2 2 22 22 22" />
-                      </svg>
-                      Transcribe File
-                    </>
-                  )}
-                </button>
-                
-                <button
-                  onClick={clearFile}
-                  disabled={loading}
-                  className="btn-action btn-action-delete"
-                  style={{ padding: "10px 16px" }}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M9 6V4h6v2" />
-                  </svg>
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
       {showSaved && (
-        <div className="toast toast-green">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-          Success · transcribing now…
+        <div className="toast toast-amber">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+          Recording saved · Transcribing…
         </div>
       )}
     </div>
