@@ -403,17 +403,41 @@ function RecorderPanel({ setTranscript, mode }) {
       {audioURL && !isRecording && (
         <div style={{ marginTop: 14 }}>
           <div className="hr" />
-          <audio controls src={audioURL} />
-          <button
-            className="btn-action btn-action-delete"
-            style={{ marginTop: 10, fontSize: 11 }}
-            onClick={() => { setAudioURL(""); setTranscript(""); }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M9 6V4h6v2" />
-            </svg>
-            Delete Recording
-          </button>
+          <audio controls src={audioURL} style={{ marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 10 }}>
+            <a
+              href={audioURL}
+              download="recording.webm"
+              className="btn-action"
+              style={{
+                fontSize: 11,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                textDecoration: "none",
+                background: "rgba(245,158,11,0.08)",
+                color: "var(--amber)",
+                borderColor: "rgba(245,158,11,0.2)"
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Download Recording
+            </a>
+            <button
+              className="btn-action btn-action-delete"
+              style={{ fontSize: 11 }}
+              onClick={() => { setAudioURL(""); setTranscript(""); }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M9 6V4h6v2" />
+              </svg>
+              Delete Recording
+            </button>
+          </div>
         </div>
       )}
 

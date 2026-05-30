@@ -116,11 +116,7 @@ def transcribe():
     try:
         audio_file.save(temp_input)
 
-        # Decode using pydub just to get metadata duration
-        audio = AudioSegment.from_file(temp_input)
-        duration_seconds = int(len(audio) / 1000)
-
-        # Map file extension to exact Deepgram Content-Type to avoid processing distortion
+        # Map file extension to exact Deepgram Content-Type
         content_type_map = {
             "mp3": "audio/mpeg",
             "wav": "audio/wav",
@@ -130,8 +126,31 @@ def transcribe():
         }
         content_type = content_type_map.get(extension, "audio/wav")
 
-        # Send the ORIGINAL high-fidelity audio file directly to Deepgram
-        with open(temp_input, "rb") as audio_data:
+        duration_seconds = 0
+        send_path = temp_input
+
+        try:
+            # Decode using pydub to read duration metadata
+            audio = AudioSegment.from_file(temp_input)
+            duration_seconds = int(len(audio) / 1000)
+
+            # Try to convert to WAV (16kHz mono) for optimal STT results
+            try:
+                audio_conv = audio.set_frame_rate(16000).set_channels(1)
+                audio_conv.export(converted_path, format="wav")
+                send_path = converted_path
+                content_type = "audio/wav"
+            except Exception as conv_err:
+                print("WAV conversion fallback active (conversion failed):", conv_err)
+                send_path = temp_input
+        except Exception as pydub_err:
+            print("Pydub loading failed (ffmpeg may be missing), falling back to raw audio:", pydub_err)
+            # Default duration fallback based on size approximation or zero
+            duration_seconds = 0
+            send_path = temp_input
+
+        # Send audio data to Deepgram
+        with open(send_path, "rb") as audio_data:
             response = requests.post(
                 "https://api.deepgram.com/v1/listen?punctuate=true&smart_format=true",
                 headers={
