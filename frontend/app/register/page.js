@@ -29,9 +29,9 @@ export default function RegisterPage() {
         }),
       });
 
-      const data = await response.json();
+      const data = await res.json();
 
-      if (!response.ok) {
+      if (!res.ok) {
         setError(data.error || "Registration failed");
         return;
       }
