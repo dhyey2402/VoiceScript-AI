@@ -38,6 +38,14 @@ app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
 db.init_app(app)
 jwt = JWTManager(app)
 
+# Auto-initialize database tables in production/staging if they don't exist
+with app.app_context():
+    try:
+        db.create_all()
+        print("Database tables initialized successfully!")
+    except Exception as e:
+        print("Database initialization failed:", e)
+
 
 @app.route("/login", methods=["POST"])
 def login():
