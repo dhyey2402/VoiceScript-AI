@@ -29,7 +29,12 @@ export default function RegisterPage() {
         }),
       });
 
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        console.error("Failed to parse JSON response:", jsonErr);
+      }
 
       if (!res.ok) {
         setError(data.error || "Registration failed");

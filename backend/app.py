@@ -31,7 +31,11 @@ _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
+db_url = os.getenv("DATABASE_URL")
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
 # Tokens expire in 7 days (or 30 days if REMEMBER_ME header is sent)
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
@@ -44,9 +48,9 @@ if "pytest" not in sys.modules:
     with app.app_context():
         try:
             db.create_all()
-            print("Database tables initialized successfully!")
+            app.logger.info("Database tables initialized successfully during startup!")
         except Exception as e:
-            print("Database initialization failed during startup:", e)
+            app.logger.exception("Database initialization failed during startup")
 
 _db_initialized = False
 
@@ -57,9 +61,22 @@ def initialize_tables_on_first_request():
         try:
             db.create_all()
             _db_initialized = True
+            app.logger.info("Database tables successfully verified/created on request.")
         except Exception as e:
-            app.logger.error(f"Database initialization failed on request: {e}")
+            app.logger.exception("Database initialization failed on request")
+            raise e
 
+@app.route("/", methods=["GET", "HEAD"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "VoiceScript AI API is running"}), 200
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
+    app.logger.exception(f"Unhandled server exception: {e}")
+    return jsonify({"error": "An internal server error occurred"}), 500
 
 @app.route("/login", methods=["POST"])
 def login():
