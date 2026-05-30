@@ -39,21 +39,22 @@ VoiceScript AI is a production-ready, high-fidelity speech-to-text web applicati
 
 ## 🧩 Project Architecture
 
-```
-                       ┌──────────────────────┐
-                       │   Frontend (Next.js) │
-                       └──────────┬───────────┘
-                                  │ HTTPS / JSON / FormData
-                                  ▼
-                       ┌──────────────────────┐
-                       │  Flask Backend API   │
-                       └──────────┬───────────┘
-                                  │
-         ┌────────────────────────┴────────────────────────┐
-         ▼                                                 ▼
-┌─────────────────┐                               ┌─────────────────┐
-│ Deepgram STT API│                               │ PostgreSQL DB   │
-└─────────────────┘                               └─────────────────┘
+```mermaid
+graph TD
+    A[Next.js Frontend] -->|HTTPS / JSON / FormData| B[Flask Backend API]
+    B -->|Audio WebM/WAV| C[Deepgram STT API]
+    B -->|SQL / SQLAlchemy ORM| D[(PostgreSQL Database)]
+
+    classDef default fill:#1e1e2e,stroke:#313244,stroke-width:2px,color:#cdd6f4;
+    classDef frontend fill:#7c3aed,stroke:#a78bfa,stroke-width:2px,color:#fff;
+    classDef backend fill:#4f46e5,stroke:#818cf8,stroke-width:2px,color:#fff;
+    classDef api fill:#059669,stroke:#34d399,stroke-width:2px,color:#fff;
+    classDef db fill:#db2777,stroke:#f472b6,stroke-width:2px,color:#fff;
+
+    class A frontend;
+    class B backend;
+    class C api;
+    class D db;
 ```
 
 ---
