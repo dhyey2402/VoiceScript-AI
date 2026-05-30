@@ -7,6 +7,7 @@ function Header() {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000";
 
   // User Profile States
   const [user, setUser] = useState({ username: "User", email: "" });
@@ -23,7 +24,7 @@ function Header() {
   useEffect(() => {
     const token = localStorage.getItem("token") || sessionStorage.getItem("token");
     if (token) {
-      fetch("http://127.0.0.1:5000/profile", {
+      fetch(`${API}/profile`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -71,7 +72,7 @@ function Header() {
     }
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/profile", {
+      const res = await fetch(`${API}/profile`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
