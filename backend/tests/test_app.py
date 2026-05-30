@@ -5,17 +5,24 @@ from unittest.mock import patch, MagicMock
 from app import app as flask_app
 from models import db, User, Transcript
 
+from sqlalchemy.pool import StaticPool
+
 @pytest.fixture
 def client():
     # Setup test configuration
     flask_app.config["TESTING"] = True
     flask_app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+    flask_app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "poolclass": StaticPool,
+        "connect_args": {"check_same_thread": False}
+    }
     flask_app.config["JWT_SECRET_KEY"] = "test-secret-key"
     
     with flask_app.test_client() as client:
         with flask_app.app_context():
             db.create_all()
             yield client
+            db.session.remove()
             db.drop_all()
 
 # Helper function to register and login a test user

@@ -3,6 +3,7 @@ from flask_cors import CORS
 import requests
 import os
 import re
+import sys
 from datetime import timedelta
 from dotenv import load_dotenv
 from models import db, Transcript, User
@@ -39,12 +40,25 @@ db.init_app(app)
 jwt = JWTManager(app)
 
 # Auto-initialize database tables in production/staging if they don't exist
-with app.app_context():
-    try:
-        db.create_all()
-        print("Database tables initialized successfully!")
-    except Exception as e:
-        print("Database initialization failed:", e)
+if "pytest" not in sys.modules:
+    with app.app_context():
+        try:
+            db.create_all()
+            print("Database tables initialized successfully!")
+        except Exception as e:
+            print("Database initialization failed during startup:", e)
+
+_db_initialized = False
+
+@app.before_request
+def initialize_tables_on_first_request():
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            db.create_all()
+            _db_initialized = True
+        except Exception as e:
+            app.logger.error(f"Database initialization failed on request: {e}")
 
 
 @app.route("/login", methods=["POST"])
