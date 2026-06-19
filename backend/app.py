@@ -51,6 +51,7 @@ if "pytest" not in sys.modules:
     with app.app_context():
         try:
             db.create_all()
+            db.engine.dispose()
             app.logger.info("Database tables initialized successfully during startup!")
         except Exception as e:
             app.logger.exception("Database initialization failed during startup")
@@ -65,6 +66,7 @@ def initialize_tables_on_first_request():
     if not _db_initialized:
         try:
             db.create_all()
+            db.engine.dispose()
             _db_initialized = True
             app.logger.info("Database tables successfully verified/created on request.")
         except Exception as e:
