@@ -59,6 +59,8 @@ _db_initialized = False
 
 @app.before_request
 def initialize_tables_on_first_request():
+    if request.method == "OPTIONS":
+        return
     global _db_initialized
     if not _db_initialized:
         try:
