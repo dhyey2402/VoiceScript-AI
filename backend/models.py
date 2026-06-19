@@ -27,6 +27,9 @@ class User(db.Model):
         nullable=False
     )
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
 class Transcript(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
@@ -50,3 +53,6 @@ class Transcript(db.Model):
     language = db.Column(db.String(50))
 
     name = db.Column(db.String(200), nullable=True)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)

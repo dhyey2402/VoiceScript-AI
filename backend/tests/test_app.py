@@ -262,3 +262,40 @@ def test_delete_transcript(client):
     # Verify deleted
     res_list_after = client.get("/transcripts", headers={"Authorization": f"Bearer {token}"})
     assert len(res_list_after.json) == 0
+
+@patch("app.requests.post")
+def test_transcribe_anonymous(mock_post, client):
+    # Configure mock Deepgram STT response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "results": {
+            "channels": [
+                {
+                    "alternatives": [
+                        {"transcript": "hello guest from pytest"}
+                    ]
+                }
+            ]
+        }
+    }
+    mock_post.return_value = mock_response
+
+    # Call /transcribe WITHOUT token
+    data = {
+        "audio": (io.BytesIO(b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"), "test.wav")
+    }
+    res = client.post(
+        "/transcribe",
+        data=data,
+        content_type="multipart/form-data"
+    )
+    
+    assert res.status_code == 200
+    assert res.json["transcript"] == "hello guest from pytest"
+    
+    # Ensure no transcripts are saved in DB
+    with flask_app.app_context():
+        transcripts = Transcript.query.all()
+        assert len(transcripts) == 0
+

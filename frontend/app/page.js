@@ -24,28 +24,40 @@ export default function Home() {
 
   useEffect(() => {
     const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-    if (!token) {
+    const guestMode = localStorage.getItem("guest_mode") === "true" || !token;
+    if (!token && !guestMode) {
       router.push("/login");
     } else {
-      setCheckingAuth(false);
-      // Fetch profile for modal
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (d?.username) {
-            setUser(d);
-            setEditUsername(d.username);
-            setEditEmail(d.email || "");
-          }
+      if (!token) {
+        localStorage.setItem("guest_mode", "true");
+        setUser({ username: "Guest User", email: "Guest Mode" });
+        setCheckingAuth(false);
+      } else {
+        localStorage.removeItem("guest_mode");
+        setCheckingAuth(false);
+        // Fetch profile for modal
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
         })
-        .catch(() => {});
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (d?.username) {
+              setUser(d);
+              setEditUsername(d.username);
+              setEditEmail(d.email || "");
+            }
+          })
+          .catch(() => {});
+      }
     }
   }, []);
 
   async function handleUpdateProfile(e) {
     e.preventDefault();
+    if (localStorage.getItem("guest_mode") === "true") {
+      setFormError("Guest profile cannot be modified. Please register/login.");
+      return;
+    }
     setSaving(true);
     setFormError("");
     setFormSuccess("");

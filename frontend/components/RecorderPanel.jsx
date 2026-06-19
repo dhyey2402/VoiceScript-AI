@@ -27,6 +27,17 @@ function RecorderPanel({ setTranscript, mode }) {
   const [volume, setVolume]     = useState(80);
   const waveRef = useRef(null);
 
+  const [trialLimitReached, setTrialLimitReached] = useState(false);
+
+  useEffect(() => {
+    if (localStorage.getItem("guest_mode") === "true") {
+      const txCount = parseInt(localStorage.getItem("guest_tx_count") || "0", 10);
+      if (txCount >= 1) {
+        setTrialLimitReached(true);
+      }
+    }
+  }, []);
+
   /* Waveform animation */
   useEffect(() => {
     if (isRecording) {
@@ -78,9 +89,11 @@ function RecorderPanel({ setTranscript, mode }) {
               fd.append("audio", blob, "rec.webm");
               
               const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+              const headers = {};
+              if (token) headers["Authorization"] = `Bearer ${token}`;
               const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe?save=false`, {
                 method: "POST",
-                headers: { Authorization: `Bearer ${token}` },
+                headers: headers,
                 body: fd,
               });
               
@@ -107,15 +120,21 @@ function RecorderPanel({ setTranscript, mode }) {
         try {
           setLoading(true);
           const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+          const headers = {};
+          if (token) headers["Authorization"] = `Bearer ${token}`;
           // Final transcription with save=true (default)
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
+            headers: headers,
             body: fd,
           });
           const data = await res.json();
           if (res.ok) {
             setTranscript(data.transcript || "");
+            if (localStorage.getItem("guest_mode") === "true" && data.transcript?.trim()) {
+              localStorage.setItem("guest_tx_count", "1");
+              setTimeout(() => setTrialLimitReached(true), 4000);
+            }
             if (!data.transcript?.trim()) {
               alert("No clear speech detected in the recording.");
             }
@@ -179,14 +198,20 @@ function RecorderPanel({ setTranscript, mode }) {
     try {
       setLoading(true);
       const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+      const headers = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/transcribe`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: headers,
         body: fd,
       });
       const data = await res.json();
       if (res.ok) {
         setTranscript(data.transcript || "");
+        if (localStorage.getItem("guest_mode") === "true" && data.transcript?.trim()) {
+          localStorage.setItem("guest_tx_count", "1");
+          setTimeout(() => setTrialLimitReached(true), 4000);
+        }
         if (data.transcript?.trim()) {
           setShowSaved(true);
           setTimeout(() => setShowSaved(false), 3000);
@@ -210,6 +235,50 @@ function RecorderPanel({ setTranscript, mode }) {
     setTranscript("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  if (trialLimitReached) {
+    return (
+      <div className="recording-panel" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 320, padding: "40px 20px", textAlign: "center" }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: "50%", background: "rgba(245,158,11,0.08)",
+          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20
+        }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth="2">
+            <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/>
+          </svg>
+        </div>
+        <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-1)", marginBottom: 10 }}>Trial Limit Reached</h3>
+        <p style={{ fontSize: 13, color: "var(--text-3)", maxWidth: 360, lineHeight: 1.5, marginBottom: 24 }}>
+          You have successfully tested the one-time free transcription trial. Create a free account to unlock unlimited transcriptions and save history!
+        </p>
+        <div style={{ display: "flex", gap: 12 }}>
+          <a
+            href="/register"
+            style={{
+              padding: "10px 18px", borderRadius: 10, textDecoration: "none",
+              background: "linear-gradient(135deg, #7c3aed, #6366f1)",
+              color: "#fff", fontSize: 12.5, fontWeight: 700,
+              boxShadow: "0 6px 20px rgba(124,58,237,0.3)",
+              cursor: "pointer"
+            }}
+          >
+            Create Free Account
+          </a>
+          <a
+            href="/login"
+            style={{
+              padding: "10px 18px", borderRadius: 10, textDecoration: "none",
+              background: "rgba(255,255,255,0.05)", border: "1px solid var(--border)",
+              color: "var(--text-2)", fontSize: 12.5, fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            Sign In
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   /* ── Render: Upload mode ── */
   if (mode === "upload") {

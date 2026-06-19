@@ -118,10 +118,11 @@ def login():
     })
 
 @app.route("/transcribe", methods=["POST"])
-@jwt_required()
+@jwt_required(optional=True)
 def transcribe():
 
-    current_user_id = int(get_jwt_identity())
+    identity = get_jwt_identity()
+    current_user_id = int(identity) if identity is not None else None
 
     audio_file = request.files.get("audio") or request.files.get("file")
 
@@ -214,9 +215,9 @@ def transcribe():
         result = response.json()
         transcript = result.get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])[0].get("transcript", "")
 
-        # Save to database only if requested
+        # Save to database only if requested and user is authenticated
         save_param = request.args.get("save", "true").lower()
-        if save_param == "true":
+        if save_param == "true" and current_user_id is not None:
             try:
                 new_transcript = Transcript(
                     text=transcript,

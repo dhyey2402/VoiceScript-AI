@@ -86,7 +86,10 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
   // Fetch user profile
   useEffect(() => {
     const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-    if (!token) return;
+    if (!token) {
+      setUser({ username: "Guest User", email: "Guest Mode" });
+      return;
+    }
     fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"}/profile`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -180,7 +183,7 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
     setRenameValue("");
   }
 
-  const userInitial = user.username ? user.username.charAt(0).toUpperCase() : "U";
+  const userInitial = user.username && localStorage.getItem("guest_mode") !== "true" ? user.username.charAt(0).toUpperCase() : "G";
 
   // Build display list — prefer custom name, fall back to text preview
   const displayList = transcripts.map((t) => ({
@@ -223,7 +226,13 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
           id="nav-history"
           className={`icon-btn${activeNav === "history" ? " active" : ""}`}
           title="History"
-          onClick={() => router.push("/history")}
+          onClick={() => {
+            if (localStorage.getItem("guest_mode") === "true") {
+              router.push("/register");
+            } else {
+              router.push("/history");
+            }
+          }}
         >
           <HistoryIcon />
         </button>
@@ -244,7 +253,13 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
           id="nav-settings"
           className="icon-btn"
           title="Settings"
-          onClick={() => onModalOpen && onModalOpen()}
+          onClick={() => {
+            if (localStorage.getItem("guest_mode") === "true") {
+              router.push("/register");
+            } else {
+              onModalOpen && onModalOpen();
+            }
+          }}
         >
           <SettingsIcon />
         </button>
@@ -258,8 +273,9 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
               width: 34,
               height: 34,
               borderRadius: "50%",
-              background: "linear-gradient(135deg, #d97706, #f59e0b)",
-              border: avatarMenuOpen ? "2px solid rgba(245,158,11,0.6)" : "2px solid transparent",
+              background: localStorage.getItem("guest_mode") === "true"
+                ? "linear-gradient(135deg, #4b5563, #6b7280)"
+                : avatarMenuOpen ? "2px solid rgba(245,158,11,0.6)" : "2px solid transparent",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -299,30 +315,61 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
                   <p style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-1)", marginBottom: 2 }}>{user.username}</p>
                   <p style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.email}</p>
                 </div>
-                <button
-                  onClick={() => { setAvatarMenuOpen(false); onModalOpen && onModalOpen(); }}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10,
-                    padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
-                    color: "var(--text-2)", fontSize: 12.5, fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                >
-                  <SettingsIcon size={14} /> Profile Settings
-                </button>
-                <button
-                  onClick={handleLogout}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10,
-                    padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
-                    color: "#f87171", fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginTop: 4, transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(244,63,94,0.08)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                >
-                  <LogoutIcon size={14} /> Sign Out
-                </button>
+                {localStorage.getItem("guest_mode") === "true" ? (
+                  <>
+                    <button
+                      onClick={() => { setAvatarMenuOpen(false); router.push("/login"); }}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
+                        color: "var(--text-2)", fontSize: 12.5, fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg> Sign In
+                    </button>
+                    <button
+                      onClick={() => { setAvatarMenuOpen(false); router.push("/register"); }}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
+                        color: "var(--amber)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginTop: 4, transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.08)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="16" y1="11" x2="22" y2="11" /></svg> Register
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setAvatarMenuOpen(false); onModalOpen && onModalOpen(); }}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
+                        color: "var(--text-2)", fontSize: 12.5, fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <SettingsIcon size={14} /> Profile Settings
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", borderRadius: 8, border: "none", background: "transparent",
+                        color: "#f87171", fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginTop: 4, transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(244,63,94,0.08)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <LogoutIcon size={14} /> Sign Out
+                    </button>
+                  </>
+                )}
               </div>
             </>
           )}
@@ -343,9 +390,29 @@ export default function Sidebar({ activeNav, onNavChange, onModalOpen, activeTra
 
         <div className="sidebar-list">
           {displayList.length === 0 ? (
-            <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--text-3)", fontSize: 11 }}>
-              No recordings yet
-            </div>
+            localStorage.getItem("guest_mode") === "true" ? (
+              <div style={{ padding: "24px 14px", textAlign: "center", color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+                <p style={{ fontSize: 11.5, lineHeight: 1.4 }}>Create an account to save your transcription history!</p>
+                <button
+                  onClick={() => router.push("/register")}
+                  style={{
+                    padding: "6px 14px", borderRadius: 8, border: "none",
+                    background: "linear-gradient(135deg, #7c3aed, #6366f1)",
+                    color: "#fff", fontSize: 11, fontWeight: 700,
+                    cursor: "pointer", transition: "transform 0.15s ease",
+                    boxShadow: "0 4px 12px rgba(124,58,237,0.25)"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.03)"}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
+                >
+                  Sign Up Free
+                </button>
+              </div>
+            ) : (
+              <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--text-3)", fontSize: 11 }}>
+                No recordings yet
+              </div>
+            )
           ) : (
             displayList.map((item) => (
               <div

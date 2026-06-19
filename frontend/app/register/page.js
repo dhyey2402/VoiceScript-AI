@@ -315,6 +315,27 @@ export default function RegisterPage() {
                 Sign In
               </a>
             </p>
+
+            {/* Guest mode link */}
+            <div style={{ marginTop: 24, textAlign: "center" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem("token");
+                  sessionStorage.removeItem("token");
+                  localStorage.setItem("guest_mode", "true");
+                  router.push("/");
+                }}
+                style={{
+                  background: "none", border: "none", color: "var(--text-3)",
+                  fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "color 0.15s"
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = "var(--amber)"}
+                onMouseLeave={e => e.currentTarget.style.color = "var(--text-3)"}
+              >
+                Continue as Guest (Try it out) &rarr;
+              </button>
+            </div>
           </form>
         </div>
       </main>
